@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>cylinder map mpi example</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <link type="text/css" rel="stylesheet" href="./assets/main.css" />
+    <style>
+        #container, #splatOverlay {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #splatOverlay {
+            pointer-events: none;
+            z-index: 2;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container"></div>
+    <div id="splatOverlay"></div>
+    <div id="atlasControls" aria-hidden="true">
+        <button id="atlasPlayPause" type="button">Pause</button>
+        <input id="atlasTimeline" type="range" min="0" max="0" step="1" value="0" />
+        <span id="atlasFrameLabel">Frame 0 / 0</span>
+        <span id="atlasMetaLabel">FPS 0 | 0 frames</span>
+    </div>
+
+
+    <script id="plainVertexShader" type="x-shader/x-vertex">
+            varying highp vec2 vUv;
+            void main() {
+                vUv = vec2(1.-uv.x,uv.y);
+                vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * modelViewPosition;
+            }
+        </script>
+
+    <script id="plainFragmentShader" type="x-shader/x-fragment">
+            uniform sampler2D tColor;
+            varying highp vec2 vUv;
+            void main() {
+                gl_FragColor = texture2D(tColor,vUv);
+            }
+        </script>
+
+    <script id="mpiVertexShader" type="x-shader/x-vertex">
+            varying highp vec2 vUv;
+            uniform mat3 vUvTransform;
+            void main() {
+                vUv = (vUvTransform * vec3(uv.x,uv.y,1.)).xy;
+                //vUv = uv;
+                vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * modelViewPosition;
+            }
+        </script>
+
+    <script id="mpiFragmentShader" type="x-shader/x-fragment">
+            uniform sampler2D tColor;
+            varying highp vec2 vUv;
+            void main() {
+                vec4 rgba = texture2D(tColor,vUv);
+                gl_FragColor = rgba;
+                //gl_FragColor = vec4(0.,0.,0.,0.);
+            }
+        </script>
+
+    <script id="texarrVertexShader" type="x-shader/x-vertex">
+            varying highp vec2 vUv;
+            //varying highp vec3 vEye;
+            //varying highp vec3 vPos;
+            void main() {
+                vUv = vec2(1.-uv.x,1.-uv.y); // flip X and Y
+                vec4 modelViewPosition = modelViewMatrix * vec4(position, 1.0);
+                gl_Position = projectionMatrix * modelViewPosition;
+            }
+        </script>
+
+    <script id="texarrFragmentShader" type="x-shader/x-fragment">
+            precision highp sampler2DArray;
+            uniform int iLayer;
+            uniform sampler2DArray tColor;
+            varying highp vec2 vUv;
+            void main() {
+                vec4 rgba = texture(tColor,vec3(vUv,iLayer));
+                gl_FragColor = rgba;
+            }
+        </script>
+
+    <script id="videoAtlasFragmentShader" type="x-shader/x-fragment">
+            uniform sampler2D tColor;
+            uniform sampler2D tAlpha;
+            uniform int useDualVideo;
+            varying highp vec2 vUv;
+            void main() {
+                vec4 rgbSample;
+                float alphaSample;
+                if (useDualVideo == 1) {
+                    rgbSample = texture2D(tColor, vUv);
+                    alphaSample = texture2D(tAlpha, vUv).r;
+                } else {
+                    vec2 uv_rgb = vec2(vUv.x * 0.5, vUv.y);
+                    vec2 uv_alpha = vec2(vUv.x * 0.5 + 0.5, vUv.y);
+                    rgbSample = texture2D(tColor, uv_rgb);
+                    alphaSample = texture2D(tColor, uv_alpha).r;
+                }
+                gl_FragColor = vec4(rgbSample.rgb, alphaSample);
+            }
+        </script>
+
+    <script id="depthVertexShader" type="x-shader/x-vertex">
+            uniform sampler2D tDisparity;
+            varying highp vec2 vUv;
+            void main() {
+                mat4 mvm = modelViewMatrix;
+                //vec3 t = vec3(mvm[3][0],mvm[3][1],mvm[3][2]);
+                //float len = length(t);
+                //if ( len > 0.1 ) t = 0.1*t/len;
+                //mvm[3][0] = t.x;
+                //mvm[3][1] = t.y;
+                //mvm[3][2] = t.z;
+                vUv = vec2(1.-uv.x,uv.y);
+                float disparity = texture2D(tDisparity,vUv).r;
+                vec4 modelViewPosition = mvm * vec4(position/disparity, 1.0);
+                gl_Position = projectionMatrix * modelViewPosition;
+            }
+        </script>
+
+    <script id="depthFragmentShader" type="x-shader/x-fragment">
+            uniform sampler2D tColor;
+            uniform sampler2D tDisparity;
+            varying highp vec2 vUv;
+            void main() {
+                gl_FragColor = texture2D(tColor,vUv);
+                //gl_FragColor = texture2D(tDisparity,vUv);
+                //gl_FragColor = vec4(1.0,0.0,0.0,1.0);
+                //gl_FragColor = vec4(vUv,0.0,1.0);
+            }
+        </script>
+
+    <script>
+        (function () { var script = document.createElement('script'); script.onload = function () { var stats = new Stats(); document.body.appendChild(stats.dom); requestAnimationFrame(function loop() { stats.update(); requestAnimationFrame(loop) }); }; script.src = '//mrdoob.github.io/stats.js/build/stats.min.js'; document.head.appendChild(script); })()
+    </script>
+
+    <div id="perf-stats"
+        style="position: absolute; top: 10px; left: 10px; color: lime; font-family: monospace; font-weight: bold; text-shadow: 1px 1px 1px black; pointer-events: none; white-space: pre;">
+        FPS: 0</div>
+    <button id="perf-download"
+        style="position: absolute; bottom: 12px; right: 12px; padding: 6px 10px; font-family: monospace; font-size: 12px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.3); background: rgba(0, 0, 0, 0.6); color: #fff; cursor: pointer;">Record
+        & Download Stats (10s)</button>
+    <div id="splat-controls"
+        style="position: absolute; right: 12px; top: 12px; background: rgba(0,0,0,0.6); color: #fff; padding: 10px 12px; border-radius: 8px; font-family: monospace; font-size: 12px; display: grid; gap: 6px; width: 220px;">
+        <div style="font-weight: bold;">Splat Overlay</div>
+        <input id="splat-file" type="file" accept=".splat" />
+        <label>Pos X <input id="splat-pos-x" type="number" step="0.05" value="0" /></label>
+        <label>Pos Y <input id="splat-pos-y" type="number" step="0.05" value="0" /></label>
+        <label>Pos Z <input id="splat-pos-z" type="number" step="0.05" value="0" /></label>
+        <label>Rot X <input id="splat-rot-x" type="number" step="1" value="0" /></label>
+        <label>Rot Y <input id="splat-rot-y" type="number" step="1" value="0" /></label>
+        <label>Rot Z <input id="splat-rot-z" type="number" step="1" value="0" /></label>
+        <label>Scale <input id="splat-scale" type="number" step="0.1" value="1" /></label>
+        <div style="opacity: 0.7;">Note: use .splat files only.</div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./assets/js/three.module.js"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from './assets/js/three.module.js';
+        import { VRButton } from './assets/js/VRButton.js';
+        import { BufferGeometryUtils } from './assets/js/BufferGeometryUtils.js';
+        import { unzipSync } from './assets/js/fflate.module.min.js';
+        import { Cylinder } from './assets/js/Cylinder.js';
+        import { Viewer as GSplatViewer, SceneFormat } from 'https://unpkg.com/@mkkellogg/gaussian-splats-3d@0.4.3/build/gaussian-splats-3d.module.js';
+
+        var parseQueryString = function () {
+            var str = window.location.search;
+            var objURL = {};
+            str.replace(
+                new RegExp("([^?=&]+)(=([^&]*))?", "g"),
+                function ($0, $1, $2, $3) {
+                    objURL[$1] = $3;
+                }
+            );
+            return objURL;
+        };
+
+        let camera, scene, renderer, sphere, clock;
+        let time0 = 0;
+        let sequencePlayer = null;
+        let videoAtlasResources = null;
+        const DEFAULT_ATLAS_FRAMES = 284;
+        let splatViewer = null;
+        let splatSceneId = null;
+        let splatUrl = null;
+        let splatTransform = {
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1]
+        };
+
+        // Performance Monitoring
+        const perfEl = document.getElementById('perf-stats');
+        const downloadButton = document.getElementById('perf-download');
+        let frameCount = 0;
+        let lastTime = performance.now();
+        let perfAccumulator = 0;
+
+        // Recording State
+        let isRecording = false;
+        let recordingStartTime = 0;
+        let perfSamples = [];
+        const RECORDING_DURATION_MS = 10000; // 10 seconds
+
+        function startRecording() {
+            if (isRecording) return;
+            isRecording = true;
+            recordingStartTime = performance.now();
+            perfSamples = [];
+            downloadButton.textContent = "Recording... (10s)";
+            downloadButton.disabled = true;
+            downloadButton.style.background = "rgba(255, 0, 0, 0.6)";
+        }
+
+        function stopRecordingAndDownload() {
+            isRecording = false;
+            downloadButton.textContent = "Record & Download Stats (10s)";
+            downloadButton.disabled = false;
+            downloadButton.style.background = "rgba(0, 0, 0, 0.6)";
+
+            if (perfSamples.length === 0) return;
+
+            const header = 'timestamp_iso,fps,frame_ms,mem_used_mb,mem_limit_mb\n';
+            const rows = perfSamples.map(sample => {
+                return [
+                    sample.timestamp,
+                    sample.fps.toFixed(2),
+                    sample.frameMs.toFixed(3),
+                    sample.memUsedMB ?? '',
+                    sample.memLimitMB ?? ''
+                ].join(',');
+            });
+            const csv = header + rows.join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `renderer_perf_${Date.now()}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        if (downloadButton) {
+            downloadButton.addEventListener('click', startRecording);
+        }
+
+        const params = parseQueryString();
+        var scale = 3.0;
+        if (params['scale']) {
+            scale = parseFloat(params['scale']);
+            if (isNaN(scale)) scale = 3.0;
+        }
+
+        let mode = params['mode'];
+        let sceneNum = parseInt(params['scene']);
+        if (isNaN(sceneNum)) sceneNum = -1;
+        let sceneName = params['name'];
+
+        let parent = new THREE.Group();
+        const splatDir = new THREE.Vector3();
+        const splatLookAt = new THREE.Vector3();
+        const sequenceControls = {
+            container: document.getElementById('atlasControls'),
+            playButton: document.getElementById('atlasPlayPause'),
+            timeline: document.getElementById('atlasTimeline'),
+            frameLabel: document.getElementById('atlasFrameLabel'),
+            metaLabel: document.getElementById('atlasMetaLabel')
+        };
+        const sequenceControlsEnabled = mode !== 'hybrid';
+        if (!sequenceControlsEnabled && sequenceControls.container) {
+            sequenceControls.container.style.display = 'none';
+            sequenceControls.container.setAttribute('aria-hidden', 'true');
+        }
+
+        function disposeVideoAtlasResources() {
+            if (!videoAtlasResources) return;
+            if (videoAtlasResources.textures) {
+                videoAtlasResources.textures.forEach((tex) => tex.dispose());
+            }
+            if (videoAtlasResources.videos) {
+                videoAtlasResources.videos.forEach((video) => {
+                    try {
+                        video.pause();
+                        video.src = '';
+                    } catch (e) { }
+                });
+            }
+            videoAtlasResources = null;
+        }
+
+        function loadVideoTexture(path) {
+            return new Promise((resolve, reject) => {
+                const video = document.createElement('video');
+                video.src = path;
+                video.crossOrigin = 'anonymous';
+                video.loop = true;
+                video.muted = true;
+                video.playsInline = true;
+
+                const texture = new THREE.VideoTexture(video);
+                texture.minFilter = THREE.LinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+                texture.format = THREE.RGBFormat;
+
+                const onLoaded = () => {
+                    video.removeEventListener('loadeddata', onLoaded);
+                    video.play().then(() => {
+                        resolve({ video, texture });
+                    }).catch(reject);
+                };
+                const onError = (event) => {
+                    video.removeEventListener('error', onError);
+                    reject(event || new Error('Failed to load video: ' + path));
+                };
+
+                video.addEventListener('loadeddata', onLoaded, { once: true });
+                video.addEventListener('error', onError, { once: true });
+            });
+        }
+
+        function setupVideoAtlasTextures(directory) {
+            const rgbPath = directory + '/atlas_rgb.mp4';
+            const alphaPath = directory + '/atlas_alpha.mp4';
+            return Promise.all([loadVideoTexture(rgbPath), loadVideoTexture(alphaPath)])
+                .then(([rgb, alpha]) => ({ type: 'dual', rgb, alpha }))
+                .catch((err) => {
+                    console.warn('Dual video atlas not available, falling back to legacy atlas_video.mp4', err);
+                    const legacyPath = directory + '/atlas_video.mp4';
+                    return loadVideoTexture(legacyPath).then((legacy) => ({ type: 'legacy', legacy }));
+                });
+        }
+
+        const manager = new THREE.LoadingManager();
+        const loader = new THREE.TextureLoader(manager);
+        let baseDir = './assets/matterport2k/'
+
+        if (sceneNum == -1 && sceneName)
+            baseDir = './assets/' + sceneName
+
+        let depths = [
+            100,
+            23.846155,
+            13.537119,
+            9.45122,
+            7.259953,
+            5.893536,
+            4.96,
+            4.281768,
+            3.7667074,
+            3.362256,
+            3.0362391,
+            2.7678573,
+            2.5430682,
+            2.3520486,
+            2.1877205,
+            2.0448549,
+            1.9195048,
+            1.808635,
+            1.7098732,
+            1.6213388,
+            1.5415217,
+            1.4691944,
+            1.40335,
+            1.3431542,
+            1.2879103,
+            1.2370312,
+            1.1900192,
+            1.1464497,
+            1.105958,
+            1.0682288,
+            1.032989,
+            1
+        ];
+
+        const height = 5;
+        const sequenceDirectoryOverride = resolveSequenceDirectoryOverride(mode);
+
+        function initSplatViewer() {
+            const overlay = document.getElementById('splatOverlay');
+            if (!overlay) return;
+            overlay.style.position = 'absolute';
+            overlay.style.inset = '0';
+            overlay.style.pointerEvents = 'none';
+            overlay.style.zIndex = '2';
+            splatViewer = new GSplatViewer({
+                container: overlay,
+                cameraUp: [0, -1, 0],
+                initialCameraPosition: [0, 0, 2],
+                initialCameraLookAt: [0, 0, 0]
+            });
+            splatViewer.start();
+        }
+
+        async function loadSplat(url) {
+            if (!splatViewer) initSplatViewer();
+            if (!splatViewer) return;
+            if (splatSceneId !== null) {
+                splatViewer.removeSplatScene(splatSceneId);
+                splatSceneId = null;
+            }
+            splatSceneId = await splatViewer.addSplatScene(url, {
+                format: SceneFormat.Splat,
+                position: splatTransform.position,
+                rotation: splatTransform.rotation,
+                scale: splatTransform.scale
+            });
+        }
+
+        function bindSplatControls() {
+            const fileInput = document.getElementById('splat-file');
+            const posX = document.getElementById('splat-pos-x');
+            const posY = document.getElementById('splat-pos-y');
+            const posZ = document.getElementById('splat-pos-z');
+            const rotX = document.getElementById('splat-rot-x');
+            const rotY = document.getElementById('splat-rot-y');
+            const rotZ = document.getElementById('splat-rot-z');
+            const scale = document.getElementById('splat-scale');
+            if (!fileInput) return;
+
+            const updateTransform = () => {
+                splatTransform.position = [
+                    parseFloat(posX.value || '0'),
+                    parseFloat(posY.value || '0'),
+                    parseFloat(posZ.value || '0')
+                ];
+                splatTransform.rotation = [
+                    parseFloat(rotX.value || '0'),
+                    parseFloat(rotY.value || '0'),
+                    parseFloat(rotZ.value || '0')
+                ];
+                const s = parseFloat(scale.value || '1');
+                splatTransform.scale = [s, s, s];
+                if (splatUrl) {
+                    loadSplat(splatUrl);
+                }
+            };
+
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files && fileInput.files[0];
+                if (!file) return;
+                if (splatUrl) URL.revokeObjectURL(splatUrl);
+                splatUrl = URL.createObjectURL(file);
+                loadSplat(splatUrl);
+            });
+
+            [posX, posY, posZ, rotX, rotY, rotZ, scale].forEach((input) => {
+                input.addEventListener('change', updateTransform);
+            });
+        }
+
+        function syncSplatCamera() {
+            if (!splatViewer || !camera) return;
+            camera.getWorldDirection(splatDir);
+            splatLookAt.copy(camera.position).add(splatDir);
+            const pos = camera.position;
+            const up = camera.up;
+            if (typeof splatViewer.setCamera === 'function') {
+                splatViewer.setCamera({
+                    position: [pos.x, pos.y, pos.z],
+                    lookAt: [splatLookAt.x, splatLookAt.y, splatLookAt.z],
+                    up: [up.x, up.y, up.z]
+                });
+                return;
+            }
+            if (splatViewer.camera) {
+                splatViewer.camera.position.set(pos.x, pos.y, pos.z);
+                splatViewer.camera.up.set(up.x, up.y, up.z);
+                splatViewer.camera.lookAt(splatLookAt.x, splatLookAt.y, splatLookAt.z);
+                if (splatViewer.camera.updateProjectionMatrix) {
+                    splatViewer.camera.updateProjectionMatrix();
+                }
+            }
+        }
+
+        function resolveSequenceDirectoryOverride(currentMode) {
+            let customDir = params['atlasDir'];
+            if (customDir) {
+                return sanitizeAtlasDirectory(customDir);
+            }
+            if (currentMode === 'atlas4d') {
+                return './assets/my_atlases/atlas';
+            }
+            return null;
+        }
+
+        function sanitizeAtlasDirectory(dir) {
+            if (!dir) return null;
+            let clean = dir.trim();
+            if (clean.startsWith('./')) clean = clean.substring(2);
+            clean = clean.replace(/^assets\//, '');
+            if (!clean.startsWith('assets/')) {
+                clean = 'assets/' + clean;
+            }
+            if (!clean.startsWith('./')) {
+                clean = './' + clean;
+            }
+            return clean.replace(/\/+$/, '');
+        }
+
+        function getSequenceDirectory(sceneNum) {
+            if (sequenceDirectoryOverride) {
+                return sequenceDirectoryOverride;
+            }
+            let directory = baseDir;
+            if (sceneNum != -1) {
+                directory = baseDir + sceneNum.toString();
+            }
+            return directory + '/atlas';
+        }
+
+        function setSequenceControlsVisible(visible) {
+            if (!sequenceControlsEnabled) return;
+            if (!sequenceControls.container) return;
+            sequenceControls.container.style.display = visible ? 'flex' : 'none';
+            sequenceControls.container.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        }
+
+        class AtlasSequencePlayer {
+            constructor(options) {
+                this.parent = options.parent;
+                this.loader = options.loader;
+                this.directory = options.directory;
+                this.totalFrames = Math.max(1, options.totalFrames || 1);
+                this.framePadding = options.framePadding || 6;
+                this.startFrameNumber = options.startFrameNumber || 0;
+                this.fps = options.fps || 24;
+                this.loop = options.loop !== false;
+                this.autoPlay = options.autoPlay !== false;
+                this.maxCacheSize = options.maxCacheSize || 36;
+                this.slider = options.slider;
+                this.playButton = options.playButton;
+                this.frameLabel = options.frameLabel;
+                this.metaLabel = options.metaLabel;
+                this.buildPathFn = options.buildPathFn;
+
+                this.frameIndex = 0;
+                this.pendingDisplayFrame = 0;
+                this.activeTextureIndex = null;
+                this.playing = this.autoPlay;
+                this.lastUpdateTime = null;
+                this.accumulator = 0;
+                this.frameDuration = 1 / Math.max(this.fps, 0.0001);
+
+                this.cache = new Map();
+                this.loading = new Set();
+
+                this.userScrubbing = false;
+                this.boundSliderInput = null;
+                this.boundSliderPointerDown = null;
+                this.boundSliderPointerUp = null;
+                this.boundPlayClick = null;
+            }
+
+            init() {
+                this.attachUI();
+                this.updateMeta();
+                this.setFrameIndex(0, true);
+                this.preloadNeighbors();
+            }
+
+            attachUI() {
+                if (this.slider) {
+                    this.slider.min = 0;
+                    this.slider.max = this.totalFrames - 1;
+                    this.slider.step = 1;
+                    this.slider.value = this.frameIndex;
+                    this.boundSliderInput = (event) => {
+                        const idx = parseInt(event.target.value, 10) || 0;
+                        this.pause();
+                        this.setFrameIndex(idx, true);
+                    };
+                    this.boundSliderPointerDown = () => {
+                        this.userScrubbing = true;
+                    };
+                    this.boundSliderPointerUp = () => {
+                        this.userScrubbing = false;
+                    };
+                    this.slider.addEventListener('input', this.boundSliderInput);
+                    this.slider.addEventListener('pointerdown', this.boundSliderPointerDown);
+                    this.slider.addEventListener('pointerup', this.boundSliderPointerUp);
+                }
+
+                if (this.playButton) {
+                    this.boundPlayClick = () => {
+                        if (this.playing) {
+                            this.pause();
+                        } else {
+                            this.play();
+                        }
+                    };
+                    this.playButton.addEventListener('click', this.boundPlayClick);
+                    this.updatePlayButton();
+                }
+
+                this.updateFrameLabel();
+            }
+
+            updateMeta() {
+                if (!this.metaLabel) return;
+                this.metaLabel.textContent = `FPS ${this.fps.toFixed(1)} | ${this.totalFrames} frames`;
+            }
+
+            updateFrameLabel() {
+                if (!this.frameLabel) return;
+                const frameNumber = this.startFrameNumber + this.frameIndex;
+                const lastFrameNumber = this.startFrameNumber + this.totalFrames - 1;
+                this.frameLabel.textContent = `Frame ${frameNumber} / ${lastFrameNumber}`;
+            }
+
+            updatePlayButton() {
+                if (!this.playButton) return;
+                this.playButton.textContent = this.playing ? 'Pause' : 'Play';
+            }
+
+            play() {
+                this.playing = true;
+                this.lastUpdateTime = null;
+                this.updatePlayButton();
+            }
+
+            pause() {
+                this.playing = false;
+                this.updatePlayButton();
+            }
+
+            dispose() {
+                if (this.slider) {
+                    if (this.boundSliderInput) {
+                        this.slider.removeEventListener('input', this.boundSliderInput);
+                    }
+                    if (this.boundSliderPointerDown) {
+                        this.slider.removeEventListener('pointerdown', this.boundSliderPointerDown);
+                    }
+                    if (this.boundSliderPointerUp) {
+                        this.slider.removeEventListener('pointerup', this.boundSliderPointerUp);
+                    }
+                }
+                if (this.playButton && this.boundPlayClick) {
+                    this.playButton.removeEventListener('click', this.boundPlayClick);
+                }
+                this.cache.forEach((texture) => texture.dispose());
+                this.cache.clear();
+                this.loading.clear();
+                this.resetMaterials();
+            }
+
+            resetMaterials() {
+                if (!this.parent) return;
+                for (let i = 0; i < this.parent.children.length; i++) {
+                    const child = this.parent.children[i];
+                    if (child.material && child.material.uniforms && child.material.uniforms.tColor) {
+                        child.material.uniforms.tColor.value = null;
+                        child.material.needsUpdate = true;
+                    }
+                }
+            }
+
+            update(currentTime) {
+                if (!this.playing) {
+                    this.lastUpdateTime = currentTime;
+                    return;
+                }
+
+                if (this.lastUpdateTime === null) {
+                    this.lastUpdateTime = currentTime;
+                    return;
+                }
+
+                const delta = currentTime - this.lastUpdateTime;
+                this.lastUpdateTime = currentTime;
+                this.accumulator += delta;
+
+                while (this.accumulator >= this.frameDuration) {
+                    this.accumulator -= this.frameDuration;
+                    this.advanceFrame();
+                }
+            }
+
+            advanceFrame() {
+                const nextIndex = (this.frameIndex + 1) % this.totalFrames;
+                if (nextIndex === 0 && !this.loop) {
+                    this.pause();
+                    return;
+                }
+                this.setFrameIndex(nextIndex);
+            }
+
+            setFrameIndex(index, force = false) {
+                const normalized = this.normalizeIndex(index);
+                if (!force && normalized === this.frameIndex) {
+                    return;
+                }
+                this.frameIndex = normalized;
+                this.pendingDisplayFrame = normalized;
+                if (this.slider && !this.userScrubbing) {
+                    this.slider.value = normalized;
+                }
+                this.updateFrameLabel();
+                this.ensureFrame(normalized, true);
+                this.preloadNeighbors();
+            }
+
+            preloadNeighbors() {
+                const radius = Math.max(1, Math.floor(this.maxCacheSize / 4));
+                for (let offset = -radius; offset <= radius; offset++) {
+                    const idx = this.normalizeIndex(this.frameIndex + offset);
+                    this.ensureFrame(idx);
+                }
+            }
+
+            ensureFrame(index, shouldDisplay = false) {
+                if (this.cache.has(index)) {
+                    if (shouldDisplay) {
+                        this.applyTexture(this.cache.get(index), index);
+                    }
+                    return;
+                }
+                if (this.loading.has(index)) {
+                    return;
+                }
+
+                this.loading.add(index);
+                const path = this.buildFramePath(index);
+                this.loader.load(
+                    path,
+                    (texture) => {
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        this.cache.set(index, texture);
+                        this.loading.delete(index);
+                        if (this.pendingDisplayFrame === index) {
+                            this.applyTexture(texture, index);
+                        }
+                        this.trimCache();
+                    },
+                    undefined,
+                    (error) => {
+                        console.warn('Failed to load sequence frame:', path, error);
+                        this.loading.delete(index);
+                    }
+                );
+            }
+
+            applyTexture(texture, index) {
+                if (!this.parent) return;
+                this.activeTextureIndex = index;
+                for (let i = 0; i < this.parent.children.length; i++) {
+                    const child = this.parent.children[i];
+                    if (child.material && child.material.uniforms && child.material.uniforms.tColor) {
+                        child.material.uniforms.tColor.value = texture;
+                        child.material.needsUpdate = true;
+                    }
+                }
+            }
+
+            trimCache() {
+                if (this.cache.size <= this.maxCacheSize) return;
+                let candidateIndex = null;
+                let maxDistance = -1;
+                this.cache.forEach((_, index) => {
+                    if (index === this.activeTextureIndex) return;
+                    const dist = this.circularDistance(index, this.frameIndex);
+                    if (dist > maxDistance) {
+                        candidateIndex = index;
+                        maxDistance = dist;
+                    }
+                });
+                if (candidateIndex !== null && this.cache.has(candidateIndex)) {
+                    const texture = this.cache.get(candidateIndex);
+                    texture.dispose();
+                    this.cache.delete(candidateIndex);
+                }
+            }
+
+            buildFramePath(index) {
+                if (this.buildPathFn) {
+                    return this.buildPathFn(index, this.directory, this.startFrameNumber, this.framePadding);
+                }
+                const frameNumber = this.startFrameNumber + index;
+                const frameStr = frameNumber.toString().padStart(this.framePadding, '0');
+                return `${this.directory}/frame_${frameStr}.png`;
+            }
+
+            circularDistance(a, b) {
+                const diff = Math.abs(a - b);
+                return Math.min(diff, this.totalFrames - diff);
+            }
+
+            normalizeIndex(index) {
+                if (this.totalFrames <= 0) return 0;
+                let normalized = index % this.totalFrames;
+                if (normalized < 0) normalized += this.totalFrames;
+                return normalized;
+            }
+        }
+
+        init(mode, sceneNum);
+        bindSplatControls();
+
+        function createGeometry(mode) {
+            if (mode == 'plain') {
+                const size = 100;
+                // Create the panoramic sphere geometry
+                const cylinderGeom = new THREE.CylinderGeometry(
+                    size,
+                    size,
+                    size * height,
+                    360,
+                    1,
+                    true
+                );
+
+                // Load and assign the texture
+                let cylinderMat = new THREE.ShaderMaterial({
+                    side: THREE.BackSide,
+                    uniforms: { tColor: { value: null } },
+                    vertexShader: document.getElementById('plainVertexShader').text,
+                    fragmentShader: document.getElementById('plainFragmentShader').text,
+                });
+
+                // Create the panoramic cylinder mesh
+                let cylinder = new THREE.Mesh(cylinderGeom, cylinderMat);
+                parent.add(cylinder);
+            } else if (mode == 'mpi' || mode == 'video_atlas' || mode == 'sequence' || mode == 'atlas4d' || mode == 'hybrid') {
+
+                const cylinderGeom = new THREE.CylinderGeometry(
+                    scale,
+                    scale,
+                    scale * height,
+                    360,
+                    1,
+                    true
+                );
+
+                for (let i = 0; i < 32; i++) {
+                    let c = i % 4;
+                    let r = Math.floor(i / 4);
+
+                    var uv_transform = new THREE.Matrix3();
+                    uv_transform.set(
+                        1. / 4., 0., c / 4.,
+                        0., 1. / 8., r / 8.,
+                        0., 0., 1.);
+
+                    let fragmentShaderId = 'mpiFragmentShader';
+                    if (mode == 'video_atlas') {
+                        fragmentShaderId = 'videoAtlasFragmentShader';
+                    }
+
+                    // Common material settings
+                    const createMaterial = () => new THREE.ShaderMaterial({
+                        side: THREE.BackSide,
+                        uniforms: {
+                            tColor: { value: null },
+                            vUvTransform: { value: uv_transform }
+                        },
+                        vertexShader: document.getElementById('mpiVertexShader').text,
+                        fragmentShader: document.getElementById(fragmentShaderId).text,
+                        blending: THREE.CustomBlending,
+                        blendEquation: THREE.AddEquation,
+                        blendSrc: THREE.OneFactor,
+                        blendDst: THREE.OneMinusSrcAlphaFactor,
+                        transparent: true,
+                        depthWrite: false, // Important for layering
+                    });
+
+                    const geom = cylinderGeom.clone().scale(depths[i], depths[i], depths[i]);
+
+                    if (mode == 'hybrid') {
+                        // Hybrid Mode: Create TWO meshes per layer
+
+                        // 1. Background Mesh
+                        const bgMat = createMaterial();
+                        const bgMesh = new THREE.Mesh(geom, bgMat);
+                        bgMesh.renderOrder = i * 2; // Even numbers for background
+                        bgMesh.name = `bg_layer_${i}`;
+                        parent.add(bgMesh);
+
+                        // 2. Foreground Mesh
+                        const fgMat = createMaterial();
+                        const fgMesh = new THREE.Mesh(geom, fgMat);
+                        fgMesh.renderOrder = i * 2 + 1; // Odd numbers for foreground, draws AFTER bg
+                        fgMesh.name = `fg_layer_${i}`;
+                        parent.add(fgMesh);
+
+                    } else {
+                        // Standard Mode: Single mesh per layer
+                        const mat = createMaterial();
+                        if (mode == 'video_atlas') {
+                            mat.uniforms.tAlpha = { value: null };
+                            mat.uniforms.useDualVideo = { value: 0 };
+                        }
+
+                        const mesh = new THREE.Mesh(geom, mat);
+                        mesh.renderOrder = i;
+                        parent.add(mesh);
+                    }
+                }
+            } else if (mode == 'texarr') {
+                const cylinderGeom = new THREE.CylinderGeometry(
+                    scale,
+                    scale,
+                    scale * height,
+                    360,
+                    1,
+                    true
+                );
+
+                for (let i = 0; i < 32; i++) {
+                    var cylinderMat = new THREE.ShaderMaterial({
+                        side: THREE.BackSide,
+                        uniforms: { tColor: { value: null }, iLayer: { value: i } },
+                        vertexShader: document.getElementById('texarrVertexShader').text,
+                        fragmentShader: document.getElementById('texarrFragmentShader').text,
+                        blending: THREE.CustomBlending,
+                        blendEquation: THREE.AddEquation,
+                        blendSrc: THREE.OneFactor, // pre-multiplied alpha
+                        blendDst: THREE.OneMinusSrcAlphaFactor,
+                        transparent: true
+                    });
+
+                    const cylinder = new THREE.Mesh(
+                        cylinderGeom.clone().scale(depths[i], depths[i], depths[i]),
+                        cylinderMat
+                    );
+
+                    parent.add(cylinder);
+                }
+
+                console.log('downloading .zip ...')
+                let directory = baseDir
+                if (sceneNum != -1)
+                    directory = baseDir + sceneNum.toString()
+                new THREE.FileLoader(manager)
+                    .setResponseType('arraybuffer')
+                    .load(directory + '/texarray.bin.zip', function (data) {
+                        console.log('unzipping ...')
+                        const zip = unzipSync(new Uint8Array(data));
+                        console.log('done .')
+                        const array = new Uint8Array(zip['texarray.bin'].buffer);
+                        console.log('number of bytes: ' + array.byteLength);
+                        const texture = new THREE.DataTexture2DArray(array, 2048, 1024, 32);
+                        texture.format = THREE.RGBAFormat;
+                        texture.type = THREE.UnsignedByteType;
+                        texture.minFilter = THREE.LinearFilter;
+                        //texture.generateMipmaps = true;
+                        //texture.minFilter = THREE.LinearMipmapLinearFilter;
+
+                        for (let i = 0; i < parent.children.length; i++) {
+                            parent.children[i].material.uniforms.tColor.value = texture;
+                        }
+                    }
+                    );
+            } else if (mode == 'depth') {
+                // Create the panoramic sphere geometery
+                const cylinderGeom = new THREE.CylinderGeometry(
+                    scale,
+                    scale,
+                    scale * height,
+                    360,
+                    63,
+                    true
+                );
+
+                // Load and assign the texture and depth map
+                let cylinderMat = new THREE.ShaderMaterial({
+                    side: THREE.BackSide,
+                    uniforms: { tColor: { value: null }, tDisparity: { value: null } },
+                    vertexShader: document.getElementById('depthVertexShader').text,
+                    fragmentShader: document.getElementById('depthFragmentShader').text,
+                });
+
+                // Create the panoramic cylinder mesh
+                let cylinder = new THREE.Mesh(cylinderGeom, cylinderMat);
+                parent.add(cylinder);
+            }
+        }
+
+        function updateScene(mode, sceneNum) {
+            if (sequencePlayer) {
+                sequencePlayer.dispose();
+                sequencePlayer = null;
+            }
+            disposeVideoAtlasResources();
+            setSequenceControlsVisible(false);
+
+            if (mode == 'plain') {
+                parent.children[0].material.uniforms.tColor.value = null;
+                parent.children[0].material.needsUpdate = true;
+                let directory = baseDir
+                if (sceneNum != -1)
+                    directory = baseDir + sceneNum.toString()
+                loader.load(
+                    directory + '/input.png',
+                    function (texture) {
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        parent.children[0].material.uniforms.tColor.value = texture;
+                        parent.children[0].material.needsUpdate = true;
+                    }
+                );
+            } else if (mode == 'mpi') {
+                for (let i = 0; i < parent.children.length; i++) {
+                    parent.children[i].material.uniforms.tColor.value = null;
+                    parent.children[i].material.needsUpdate = true;
+                }
+                let directory = baseDir
+                if (sceneNum != -1)
+                    directory = baseDir + sceneNum.toString()
+                loader.load(
+                    directory + '/atlas.png',
+                    function (texture) {
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        for (let i = 0; i < parent.children.length; i++) {
+                            parent.children[i].material.uniforms.tColor.value = texture;
+                            parent.children[i].material.needsUpdate = true;
+                        }
+                    }
+                );
+            } else if (mode == 'video_atlas') {
+                let directory = baseDir;
+                if (sceneNum != -1) directory = baseDir + sceneNum.toString();
+
+                setupVideoAtlasTextures(directory).then((result) => {
+                    disposeVideoAtlasResources();
+                    if (result.type === 'dual') {
+                        videoAtlasResources = {
+                            videos: [result.rgb.video, result.alpha.video],
+                            textures: [result.rgb.texture, result.alpha.texture]
+                        };
+                        for (let i = 0; i < parent.children.length; i++) {
+                            const uniforms = parent.children[i].material.uniforms;
+                            uniforms.tColor.value = result.rgb.texture;
+                            if (uniforms.tAlpha) {
+                                uniforms.tAlpha.value = result.alpha.texture;
+                                uniforms.useDualVideo.value = 1;
+                            }
+                            parent.children[i].material.needsUpdate = true;
+                        }
+                    } else {
+                        videoAtlasResources = {
+                            videos: [result.legacy.video],
+                            textures: [result.legacy.texture]
+                        };
+                        for (let i = 0; i < parent.children.length; i++) {
+                            const uniforms = parent.children[i].material.uniforms;
+                            uniforms.tColor.value = result.legacy.texture;
+                            if (uniforms.tAlpha) {
+                                uniforms.tAlpha.value = null;
+                                uniforms.useDualVideo.value = 0;
+                            }
+                            parent.children[i].material.needsUpdate = true;
+                        }
+                    }
+                }).catch((err) => {
+                    console.error('Failed to load video atlas textures', err);
+                });
+            } else if (mode == 'sequence' || mode == 'atlas4d') {
+                const directory = getSequenceDirectory(sceneNum);
+                let fps = params['fps'] ? parseFloat(params['fps']) : (mode === 'atlas4d' ? 24 : 30);
+                if (!isFinite(fps) || fps <= 0) fps = 24;
+
+                let totalFrames = params['frames'] ? parseInt(params['frames']) : (mode === 'atlas4d' ? DEFAULT_ATLAS_FRAMES : 100);
+                if (!Number.isInteger(totalFrames) || totalFrames < 1) totalFrames = mode === 'atlas4d' ? DEFAULT_ATLAS_FRAMES : 100;
+
+                let startFrame = params['start'] ? parseInt(params['start']) : (mode === 'atlas4d' ? 0 : 1);
+                if (!Number.isInteger(startFrame) || startFrame < 0) startFrame = 0;
+
+                let framePadding = params['pad'] ? parseInt(params['pad']) : 6;
+                if (!Number.isInteger(framePadding) || framePadding < 1) framePadding = 6;
+
+                let cacheSize = params['cache'] ? parseInt(params['cache']) : 40;
+                if (!Number.isInteger(cacheSize) || cacheSize < 8) cacheSize = 40;
+
+                const autoPlay = !(params['autoplay'] === '0' || params['autoplay'] === 'false');
+                const loopPlayback = !(params['loop'] === '0' || params['loop'] === 'false');
+
+                console.log(`Dynamic sequence mode: directory=${directory}, frames=${totalFrames}, fps=${fps}`);
+
+                sequencePlayer = new AtlasSequencePlayer({
+                    parent,
+                    loader,
+                    directory,
+                    totalFrames,
+                    fps,
+                    startFrameNumber: startFrame,
+                    framePadding,
+                    autoPlay,
+                    loop: loopPlayback,
+                    maxCacheSize: cacheSize,
+                    slider: sequenceControlsEnabled ? sequenceControls.timeline : null,
+                    playButton: sequenceControlsEnabled ? sequenceControls.playButton : null,
+                    frameLabel: sequenceControlsEnabled ? sequenceControls.frameLabel : null,
+                    metaLabel: sequenceControlsEnabled ? sequenceControls.metaLabel : null
+                });
+                sequencePlayer.init();
+                setSequenceControlsVisible(true);
+
+            } else if (mode == 'depth') {
+                parent.children[0].material.uniforms.tColor.value = null;
+                parent.children[0].material.uniforms.tDisparity.value = null;
+                parent.children[0].material.needsUpdate = true;
+                let directory = baseDir
+                if (sceneNum != -1)
+                    directory = baseDir + sceneNum.toString()
+
+                loader.load(
+                    directory + '/input.png',
+                    function (texture) {
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        parent.children[0].material.uniforms.tColor.value = texture;
+                        parent.children[0].material.needsUpdate = true;
+                    }
+                );
+
+                loader.load(
+                    directory + '/disparity_map.png',
+                    function (texture) {
+                        texture.minFilter = THREE.LinearFilter;
+                        texture.generateMipmaps = false;
+                        parent.children[0].material.uniforms.tDisparity.value = texture;
+                        parent.children[0].material.needsUpdate = true;
+                    }
+                );
+            } else if (mode == 'hybrid') {
+                // 1. Load Static Background
+                let directory = baseDir;
+                if (sceneNum != -1) directory = baseDir + sceneNum.toString();
+
+                // Load background atlas (frame_000000/atlas.png)
+                // Note: The hybrid pipeline copies the background frame to assets/scene/frame_000000/atlas.png
+                // But wait, the pipeline copies it to assets/scene/frame_XXXXXX
+                // Let's assume the user passes &bg_frame=0 or we default to frame_000000
+
+                // Actually, the pipeline structure is:
+                // assets/scene/frame_000000/atlas.png (Background)
+                // assets/scene/foreground_atlas/frame_XXXXXX/atlas.png (Foregrounds)
+
+                // Let's load the background first.
+                // We need to find the background meshes.
+
+                const bgFrameName = 'frame_000000'; // Default, or could be param
+                const bgPath = `${directory}/${bgFrameName}/atlas.png`;
+
+                loader.load(bgPath, (texture) => {
+                    texture.minFilter = THREE.LinearFilter;
+                    texture.generateMipmaps = false;
+
+                    parent.children.forEach(child => {
+                        if (child.name.startsWith('bg_layer_')) {
+                            child.material.uniforms.tColor.value = texture;
+                            child.material.needsUpdate = true;
+                        }
+                    });
+                });
+
+                // 2. Setup Dynamic Foreground Sequence
+                const fgDirectory = `${directory}/foreground_atlas`;
+
+                // Re-use sequence logic params
+                let fps = params['fps'] ? parseFloat(params['fps']) : 24;
+                let totalFrames = params['frames'] ? parseInt(params['frames']) : 100;
+                let startFrame = params['start'] ? parseInt(params['start']) : 0;
+                let framePadding = params['pad'] ? parseInt(params['pad']) : 6;
+                let cacheSize = params['cache'] ? parseInt(params['cache']) : 40;
+                const autoPlay = !(params['autoplay'] === '0');
+                const loopPlayback = !(params['loop'] === '0');
+
+                console.log(`Hybrid mode: bg=${bgPath}, fg=${fgDirectory}`);
+
+                // We need a specialized player or modify the existing one to only target fg meshes
+                // Let's modify the existing player to accept a target filter or callback
+
+                // HACK: We can create a "Virtual Parent" that only contains the FG meshes
+                // But AtlasSequencePlayer iterates parent.children.
+                // Let's subclass or modify AtlasSequencePlayer to filter children.
+
+                // Better yet, let's just pass a custom applyTexture callback to the player if we could.
+                // But since I can't easily change the class definition above without re-writing it all,
+                // I will create a temporary "proxy parent" object that has a .children array containing only FG meshes.
+
+                const fgMeshes = parent.children.filter(c => c.name.startsWith('fg_layer_'));
+                const proxyParent = { children: fgMeshes };
+
+                sequencePlayer = new AtlasSequencePlayer({
+                    parent: proxyParent, // Pass the proxy
+                    loader,
+                    directory: fgDirectory,
+                    totalFrames,
+                    fps,
+                    startFrameNumber: startFrame,
+                    framePadding,
+                    autoPlay,
+                    loop: loopPlayback,
+                    maxCacheSize: cacheSize,
+                    slider: sequenceControlsEnabled ? sequenceControls.timeline : null,
+                    playButton: sequenceControlsEnabled ? sequenceControls.playButton : null,
+                    frameLabel: sequenceControlsEnabled ? sequenceControls.frameLabel : null,
+                    metaLabel: sequenceControlsEnabled ? sequenceControls.metaLabel : null,
+                    buildPathFn: (index, directory, startFrame, padding) => {
+                        const frameNumber = startFrame + index;
+                        const frameStr = frameNumber.toString().padStart(padding, '0');
+                        return `${directory}/frame_${frameStr}/atlas.png`;
+                    }
+                });
+                sequencePlayer.init();
+                setSequenceControlsVisible(true);
+            }
+        }
+
+        function init(mode, sceneNum) {
+            const container = document.getElementById('container');
+
+            clock = new THREE.Clock();
+            time0 = clock.getElapsedTime();
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x101010);
+
+            const light = new THREE.AmbientLight(0xffffff, 1);
+            scene.add(light);
+
+            camera = new THREE.PerspectiveCamera(
+                90,
+                window.innerWidth / window.innerHeight,
+                .1,
+                2000
+            );
+
+            createGeometry(mode);
+
+            updateScene(mode, sceneNum);
+
+            scene.add(parent);
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, premultipliedAlpha: true });
+            console.log('max texture size: ' + renderer.capabilities.maxTextureSize);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            renderer.xr.setReferenceSpaceType('local');
+            renderer.setAnimationLoop(render);
+
+            var controller1, controller2;
+            function onSelectEnd(event) {
+                const controller = event.target;
+                var cameraVR = renderer.xr.getCamera(camera);
+                let ref = cameraVR.cameras[0].matrix;
+                let refpos = new THREE.Vector3();
+                refpos.setFromMatrixPosition(ref);
+                console.log(refpos);
+                let pos = parent.position;
+                parent.translateX(refpos.x - pos.x);
+                parent.translateY(refpos.y - pos.y);
+                parent.translateZ(refpos.z - pos.z);
+            }
+            function onSqueezeEnd(event) {
+                sceneNum = (sceneNum + 1) % 10;
+                updateScene(mode, sceneNum);
+            }
+
+            controller1 = renderer.xr.getController(0);
+            //controller1.addEventListener( 'selectstart', onSelectStart );
+            controller1.addEventListener('selectend', onSelectEnd);
+            scene.add(controller1);
+
+            controller2 = renderer.xr.getController(1);
+            //controller2.addEventListener( 'selectstart', onSelectStart );
+            controller2.addEventListener('selectend', onSelectEnd);
+            scene.add(controller2);
+
+            controller1 = renderer.xr.getController(0);
+            controller1.addEventListener('squeezeend', onSqueezeEnd);
+            scene.add(controller1);
+
+            controller2 = renderer.xr.getController(1);
+            controller2.addEventListener('squeezend', onSqueezeEnd);
+            scene.add(controller2);
+
+            container.appendChild(renderer.domElement);
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function render() {
+            const now = performance.now();
+
+            // Performance stats
+            frameCount++;
+            const delta = now - lastTime;
+
+            if (frameCount >= 20) { // Update stats every 20 frames
+                const avgMs = perfAccumulator / frameCount;
+                const fps = 1000 / avgMs;
+
+                let memText = '';
+                let memUsedMB = null;
+                let memLimitMB = null;
+
+                if (performance.memory) {
+                    memUsedMB = Math.round(performance.memory.usedJSHeapSize / 1048576);
+                    memLimitMB = Math.round(performance.memory.jsHeapSizeLimit / 1048576);
+                    memText = `\nMem: ${memUsedMB}/${memLimitMB} MB`;
+                }
+
+                if (perfEl) {
+                    perfEl.textContent = `FPS: ${Math.round(fps)}\nFrame: ${avgMs.toFixed(1)} ms${memText}`;
+                }
+
+                // Recording Logic
+                if (isRecording) {
+                    const elapsedRecording = now - recordingStartTime;
+                    if (elapsedRecording >= RECORDING_DURATION_MS) {
+                        stopRecordingAndDownload();
+                    } else {
+                        perfSamples.push({
+                            timestamp: new Date().toISOString(),
+                            fps: fps,
+                            frameMs: avgMs,
+                            memUsedMB: memUsedMB,
+                            memLimitMB: memLimitMB
+                        });
+                        // Update button text with remaining time
+                        const remaining = Math.ceil((RECORDING_DURATION_MS - elapsedRecording) / 1000);
+                        if (downloadButton) {
+                            downloadButton.textContent = `Recording... (${remaining}s)`;
+                        }
+                    }
+                }
+
+                frameCount = 0;
+                perfAccumulator = 0;
+            }
+
+            lastTime = now;
+            perfAccumulator += delta;
+
+            const currentTime = clock.getElapsedTime();
+            if (sequencePlayer) {
+                sequencePlayer.update(currentTime);
+            }
+
+            if (renderer.xr.isPresenting === false) {
+                const elapsed = currentTime - time0;
+                camera.rotation.y = -elapsed / 10.;
+                camera.position.x = Math.sin(elapsed) / 3;
+            }
+
+            syncSplatCamera();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+
+</html>

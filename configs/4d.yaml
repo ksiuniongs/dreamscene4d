@@ -11,7 +11,7 @@ mesh:
 # estimated elevation angle for input image 
 elevation: 0
 # reference image resolution
-ref_size: 256
+ref_size: 128
 # density thresh for mesh extraction
 density_thresh: 0.5
 
@@ -19,10 +19,10 @@ density_thresh: 0.5
 visdir: vis_data
 outdir: logs
 mesh_format: obj
-save_path: ???
+save_path: ./outputs
 
 ### Training
-gmflow_path: './gmflow/pretrained/gmflow_kitti-285701a8.pth'
+gmflow_path: './pretrained/pretrained/gmflow_kitti-285701a8.pth'
 # guidance loss weights (0 to disable)
 lambda_sd: 0
 stable_zero123: False
@@ -30,7 +30,7 @@ mvdream: False
 lambda_zero123: 1
 lambda_svd: 0
 # training batch size per iter
-batch_size: 10
+batch_size: 4
 # training iterations for stage 1
 iters: 1000
 # training iterations for stage 2
@@ -45,7 +45,7 @@ load:
 train_geo: False
 # prob to invert background color during training (0 = always black, 1 = always white)
 invert_bg_prob: 0.
-n_views: 4
+n_views: 2
 t_max: 0.5
 resize_square: False
 depth_loss: False

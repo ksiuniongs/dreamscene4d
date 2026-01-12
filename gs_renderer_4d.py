@@ -68,6 +68,25 @@ class Renderer:
         elif isinstance(input, BasicPointCloud):
             # load from a provided pcd
             self.gaussians.create_from_pcd(input, 1)
+        elif isinstance(input, dict):
+            loaded_dict = input
+            model_params = (
+                loaded_dict['active_sh_degree'],
+                loaded_dict['xyz'],
+                loaded_dict['deformation_state_dict'],
+                loaded_dict['deformation_table'],
+                loaded_dict['features_dc'],
+                loaded_dict['features_rest'],
+                loaded_dict['scaling'],
+                loaded_dict['rotation'],
+                loaded_dict['opacity'],
+                loaded_dict['max_radii2D'],
+                loaded_dict['xyz_gradient_accum'],
+                loaded_dict['denom'],
+                loaded_dict['optimizer_state_dict'],
+                loaded_dict['spatial_lr_scale'],
+            )
+            self.gaussians.restore(model_params)
         else:
             # load from saved ply
             self.gaussians.load_ply(input)

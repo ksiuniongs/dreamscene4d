@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GSplat Sequence Viewer</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0e1016;
+        color: #f1f4ff;
+        font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+      }
+      #viewer {
+        position: fixed;
+        inset: 0;
+      }
+      .hud {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px 16px;
+        background: rgba(18, 20, 32, 0.78);
+        border: 1px solid rgba(120, 130, 170, 0.35);
+        border-radius: 12px;
+        backdrop-filter: blur(8px);
+        max-width: 320px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .row label {
+        font-size: 12px;
+        opacity: 0.8;
+        min-width: 54px;
+      }
+      .row input[type="range"] {
+        flex: 1;
+      }
+      button {
+        background: #2b59ff;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #1c2238;
+        border: 1px solid rgba(120, 130, 170, 0.45);
+      }
+      .hint {
+        font-size: 11px;
+        opacity: 0.7;
+        line-height: 1.4;
+      }
+      .status {
+        font-size: 12px;
+        opacity: 0.85;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="viewer"></div>
+    <div class="hud">
+      <div>GSplat Sequence Viewer</div>
+      <div class="row">
+        <input id="fileInput" type="file" accept=".splat" multiple />
+      </div>
+      <div class="row">
+        <button id="playPause">Pause</button>
+        <button id="resetCam" class="secondary">Reset Cam</button>
+      </div>
+      <div class="row">
+        <label for="frameSlider">Frame</label>
+        <input id="frameSlider" type="range" min="0" max="0" step="1" value="0" />
+      </div>
+      <div class="status" id="frameLabel">No files loaded</div>
+      <div class="hint">Select all frame_*.splat files in order.</div>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

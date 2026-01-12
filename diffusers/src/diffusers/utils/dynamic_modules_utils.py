@@ -17,6 +17,7 @@
 import importlib
 import inspect
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -25,7 +26,11 @@ from pathlib import Path
 from typing import Dict, Optional, Union
 from urllib import request
 
-from huggingface_hub import HfFolder, cached_download, hf_hub_download, model_info
+from huggingface_hub import HfFolder, hf_hub_download, model_info
+try:
+    from huggingface_hub import cached_download as _hf_cached_download
+except Exception:
+    _hf_cached_download = None
 from packaging import version
 
 from .. import __version__
@@ -38,6 +43,57 @@ COMMUNITY_PIPELINES_URL = (
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+def _cached_download(
+    url: str,
+    cache_dir: Optional[Union[str, os.PathLike]] = None,
+    force_download: bool = False,
+    proxies: Optional[Dict] = None,
+    resume_download: bool = False,
+    local_files_only: bool = False,
+    use_auth_token: Optional[Union[str, bool]] = None,
+):
+    if _hf_cached_download is not None:
+        return _hf_cached_download(
+            url,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            resume_download=resume_download,
+            local_files_only=local_files_only,
+            use_auth_token=use_auth_token,
+        )
+
+    # Minimal fallback for newer huggingface_hub versions where cached_download has been removed.
+    # Used only for community pipelines fetched from GitHub raw URLs.
+    if cache_dir is None:
+        cache_dir = HF_MODULES_CACHE
+    cache_dir = str(cache_dir)
+
+    download_dir = os.path.join(cache_dir, "downloads")
+    os.makedirs(download_dir, exist_ok=True)
+
+    filename = hashlib.sha256(url.encode("utf-8")).hexdigest() + ".py"
+    cached_file = os.path.join(download_dir, filename)
+
+    if os.path.exists(cached_file) and not force_download:
+        return cached_file
+    if local_files_only:
+        raise EnvironmentError(f"Local files only and no cached file found for URL: {url}")
+
+    req = request.Request(url, headers={"User-Agent": "diffusers"})
+    if proxies:
+        opener = request.build_opener(request.ProxyHandler(proxies))
+        resp = opener.open(req)
+    else:
+        resp = request.urlopen(req)
+
+    with resp:
+        content = resp.read()
+    with open(cached_file, "wb") as f:
+        f.write(content)
+    return cached_file
 
 
 def get_diffusers_versions():
@@ -282,7 +338,7 @@ def get_cached_module_file(
         # community pipeline on GitHub
         github_url = COMMUNITY_PIPELINES_URL.format(revision=revision, pipeline=pretrained_model_name_or_path)
         try:
-            resolved_module_file = cached_download(
+            resolved_module_file = _cached_download(
                 github_url,
                 cache_dir=cache_dir,
                 force_download=force_download,

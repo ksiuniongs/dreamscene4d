@@ -1,4 +1,4 @@
-torch >= 2.0.0
+# torch >= 2.0.0
 tqdm
 rich
 ninja
@@ -24,7 +24,8 @@ transformers
 xatlas
 trimesh
 PyMCubes==0.1.4
-pymeshlab==0.2
+# pymeshlab==0.2
+pymeshlab
 kornia
 opencv-python
 torchmetrics

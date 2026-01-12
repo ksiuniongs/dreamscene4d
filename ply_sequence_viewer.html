@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PLY Sequence Viewer</title>
+    <style>
+        :root {
+            color-scheme: light;
+        }
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #0e1016;
+            color: #f1f4ff;
+            font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+        }
+        #viewer {
+            position: fixed;
+            inset: 0;
+        }
+        canvas {
+            display: block;
+        }
+        .hud {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 14px 16px;
+            background: rgba(18, 20, 32, 0.78);
+            border: 1px solid rgba(120, 130, 170, 0.35);
+            border-radius: 12px;
+            backdrop-filter: blur(8px);
+            max-width: 280px;
+        }
+        .hud h1 {
+            margin: 0;
+            font-size: 16px;
+            letter-spacing: 0.02em;
+        }
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .row label {
+            font-size: 12px;
+            opacity: 0.8;
+            min-width: 54px;
+        }
+        .row input[type="range"] {
+            flex: 1;
+        }
+        .row input[type="number"] {
+            width: 70px;
+            background: #111527;
+            color: #f1f4ff;
+            border: 1px solid rgba(120, 130, 170, 0.45);
+            border-radius: 6px;
+            padding: 4px 6px;
+        }
+        button {
+            background: #2b59ff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        button.secondary {
+            background: #1c2238;
+            border: 1px solid rgba(120, 130, 170, 0.45);
+        }
+        .hint {
+            font-size: 11px;
+            opacity: 0.7;
+            line-height: 1.4;
+        }
+        .status {
+            font-size: 12px;
+            opacity: 0.85;
+        }
+        @media (max-width: 720px) {
+            .hud {
+                left: 10px;
+                right: 10px;
+                max-width: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="viewer"></div>
+    <div class="hud">
+        <h1>dog_jump_ply</h1>
+        <div class="row">
+            <button id="playPause">Pause</button>
+            <button id="resetPose" class="secondary">Reset Pose</button>
+        </div>
+        <div class="row">
+            <label for="frameSlider">Frame</label>
+            <input id="frameSlider" type="range" min="0" max="0" step="1" value="0" />
+        </div>
+        <div class="status" id="frameLabel">Frame 0 / 0</div>
+        <div class="row">
+            <label for="posX">Pos X</label>
+            <input id="posX" type="number" step="0.01" />
+        </div>
+        <div class="row">
+            <label for="posY">Pos Y</label>
+            <input id="posY" type="number" step="0.01" />
+        </div>
+        <div class="row">
+            <label for="posZ">Pos Z</label>
+            <input id="posZ" type="number" step="0.01" />
+        </div>
+        <div class="row">
+            <label for="scale">Scale</label>
+            <input id="scale" type="range" min="0.1" max="6" step="0.05" value="1" />
+        </div>
+        <div class="row">
+            <label for="splatSize">Splat</label>
+            <input id="splatSize" type="range" min="0.2" max="6" step="0.05" value="1" />
+        </div>
+        <div class="hint">
+            Drag empty space to orbit, scroll to zoom. Drag the points to move the model.
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from './assets/js/three.module.js';
+
+        const params = new URLSearchParams(window.location.search);
+        const sequenceDir = params.get('dir') || '../data/dog_jump_ply';
+        const totalFrames = Number(params.get('frames') || 10);
+        const fps = Number(params.get('fps') || 12);
+
+        const container = document.getElementById('viewer');
+        const frameSlider = document.getElementById('frameSlider');
+        const frameLabel = document.getElementById('frameLabel');
+        const playPause = document.getElementById('playPause');
+        const posInputs = {
+            x: document.getElementById('posX'),
+            y: document.getElementById('posY'),
+            z: document.getElementById('posZ')
+        };
+        const scaleInput = document.getElementById('scale');
+        const resetPose = document.getElementById('resetPose');
+        const splatSizeInput = document.getElementById('splatSize');
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#0e1016');
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 100);
+        const target = new THREE.Vector3(0, 0, 0);
+        const spherical = new THREE.Spherical(2.8, Math.PI / 3, Math.PI / 4);
+        camera.position.setFromSpherical(spherical).add(target);
+        camera.lookAt(target);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const grid = new THREE.GridHelper(6, 12, 0x2f3556, 0x1b2038);
+        grid.position.y = -0.5;
+        scene.add(grid);
+
+        const light = new THREE.DirectionalLight(0xffffff, 1.1);
+        light.position.set(1.5, 2.2, 1.8);
+        scene.add(light);
+        scene.add(new THREE.AmbientLight(0x8890b8, 0.6));
+
+        const raycaster = new THREE.Raycaster();
+        raycaster.params.Points.threshold = 0.05;
+        const pointer = new THREE.Vector2();
+        let isDragging = false;
+        let dragMode = 'orbit';
+        const dragPlane = new THREE.Plane();
+        const dragOffset = new THREE.Vector3();
+        const dragIntersection = new THREE.Vector3();
+
+        const geometries = [];
+        const splatMaterial = new THREE.ShaderMaterial({
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.NormalBlending,
+            uniforms: {
+                uSizeScale: { value: 1.0 }
+            },
+            vertexShader: `
+                precision highp float;
+                attribute vec3 color;
+                attribute float opacity;
+                attribute float size;
+                uniform float uSizeScale;
+                varying vec3 vColor;
+                varying float vOpacity;
+                void main() {
+                    vColor = color;
+                    vOpacity = opacity;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    float distScale = 1.0 / max(0.05, -mvPosition.z);
+                    gl_PointSize = size * distScale * uSizeScale;
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                precision highp float;
+                varying vec3 vColor;
+                varying float vOpacity;
+                void main() {
+                    vec2 uv = gl_PointCoord * 2.0 - 1.0;
+                    float r2 = dot(uv, uv);
+                    if (r2 > 1.0) discard;
+                    float alpha = exp(-r2 * 4.0);
+                    gl_FragColor = vec4(vColor, alpha * vOpacity);
+                }
+            `
+        });
+        const points = new THREE.Points(new THREE.BufferGeometry(), splatMaterial);
+        scene.add(points);
+
+        let currentFrame = 0;
+        let playing = true;
+        const clock = new THREE.Clock();
+        let animationTime = 0;
+
+        function updateFrameLabel() {
+            frameLabel.textContent = `Frame ${currentFrame + 1} / ${totalFrames}`;
+        }
+
+        function setFrame(index) {
+            currentFrame = Math.min(Math.max(index, 0), totalFrames - 1);
+            const geometry = geometries[currentFrame];
+            if (geometry) {
+                points.geometry = geometry;
+                points.geometry.computeBoundingSphere();
+            }
+            frameSlider.value = currentFrame;
+            updateFrameLabel();
+        }
+
+        function updateInputsFromObject() {
+            posInputs.x.value = points.position.x.toFixed(2);
+            posInputs.y.value = points.position.y.toFixed(2);
+            posInputs.z.value = points.position.z.toFixed(2);
+            scaleInput.value = points.scale.x.toFixed(2);
+        }
+
+        frameSlider.addEventListener('input', () => {
+            playing = false;
+            playPause.textContent = 'Play';
+            setFrame(Number(frameSlider.value));
+        });
+
+        playPause.addEventListener('click', () => {
+            playing = !playing;
+            playPause.textContent = playing ? 'Pause' : 'Play';
+        });
+
+        resetPose.addEventListener('click', () => {
+            points.position.set(0, 0, 0);
+            points.scale.set(1, 1, 1);
+            updateInputsFromObject();
+        });
+
+        Object.entries(posInputs).forEach(([axis, input]) => {
+            input.addEventListener('change', () => {
+                points.position[axis] = Number(input.value || 0);
+            });
+        });
+
+        scaleInput.addEventListener('input', () => {
+            const scale = Number(scaleInput.value || 1);
+            points.scale.set(scale, scale, scale);
+        });
+
+        splatSizeInput.addEventListener('input', () => {
+            const value = Number(splatSizeInput.value || 1);
+            splatMaterial.uniforms.uSizeScale.value = value;
+        });
+
+        function updatePointer(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+
+        function startObjectDrag() {
+            dragMode = 'move';
+            dragPlane.setFromNormalAndCoplanarPoint(
+                camera.getWorldDirection(dragPlane.normal),
+                points.position
+            );
+            raycaster.ray.intersectPlane(dragPlane, dragIntersection);
+            dragOffset.copy(dragIntersection).sub(points.position);
+        }
+
+        function onPointerDown(event) {
+            if (event.button !== 0) return;
+            updatePointer(event);
+            raycaster.setFromCamera(pointer, camera);
+            const hit = raycaster.intersectObject(points, true)[0];
+            if (hit) {
+                isDragging = true;
+                startObjectDrag();
+            } else {
+                isDragging = true;
+                dragMode = 'orbit';
+            }
+        }
+
+        function onPointerMove(event) {
+            if (!isDragging) return;
+            updatePointer(event);
+            if (dragMode === 'move') {
+                raycaster.setFromCamera(pointer, camera);
+                if (raycaster.ray.intersectPlane(dragPlane, dragIntersection)) {
+                    points.position.copy(dragIntersection.sub(dragOffset));
+                    updateInputsFromObject();
+                }
+                return;
+            }
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+            spherical.theta -= movementX * 0.005;
+            spherical.phi -= movementY * 0.005;
+            spherical.phi = Math.max(0.08, Math.min(Math.PI - 0.08, spherical.phi));
+            camera.position.setFromSpherical(spherical).add(target);
+            camera.lookAt(target);
+        }
+
+        function onPointerUp() {
+            isDragging = false;
+        }
+
+        function onWheel(event) {
+            const delta = Math.sign(event.deltaY);
+            spherical.radius = Math.min(10, Math.max(0.5, spherical.radius + delta * 0.2));
+            camera.position.setFromSpherical(spherical).add(target);
+            camera.lookAt(target);
+        }
+
+        renderer.domElement.addEventListener('pointerdown', onPointerDown);
+        renderer.domElement.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
+
+        function padFrame(index) {
+            return String(index).padStart(3, '0');
+        }
+
+        function parsePlyHeader(headerText) {
+            const lines = headerText.split(/\r?\n/);
+            let format = 'ascii';
+            let vertexCount = 0;
+            let inVertex = false;
+            const properties = [];
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts[0] === 'format') {
+                    format = parts[1];
+                } else if (parts[0] === 'element') {
+                    inVertex = parts[1] === 'vertex';
+                    if (inVertex) {
+                        vertexCount = Number(parts[2]);
+                        properties.length = 0;
+                    }
+                } else if (parts[0] === 'property' && inVertex) {
+                    properties.push({ type: parts[1], name: parts[2] });
+                } else if (parts[0] === 'end_header') {
+                    break;
+                }
+            }
+            return { format, vertexCount, properties };
+        }
+
+        function buildReaders() {
+            const map = {
+                char: { size: 1, read: (dv, o) => dv.getInt8(o) },
+                uchar: { size: 1, read: (dv, o) => dv.getUint8(o) },
+                int8: { size: 1, read: (dv, o) => dv.getInt8(o) },
+                uint8: { size: 1, read: (dv, o) => dv.getUint8(o) },
+                short: { size: 2, read: (dv, o) => dv.getInt16(o, true) },
+                ushort: { size: 2, read: (dv, o) => dv.getUint16(o, true) },
+                int16: { size: 2, read: (dv, o) => dv.getInt16(o, true) },
+                uint16: { size: 2, read: (dv, o) => dv.getUint16(o, true) },
+                int: { size: 4, read: (dv, o) => dv.getInt32(o, true) },
+                uint: { size: 4, read: (dv, o) => dv.getUint32(o, true) },
+                int32: { size: 4, read: (dv, o) => dv.getInt32(o, true) },
+                uint32: { size: 4, read: (dv, o) => dv.getUint32(o, true) },
+                float: { size: 4, read: (dv, o) => dv.getFloat32(o, true) },
+                float32: { size: 4, read: (dv, o) => dv.getFloat32(o, true) },
+                double: { size: 8, read: (dv, o) => dv.getFloat64(o, true) },
+                float64: { size: 8, read: (dv, o) => dv.getFloat64(o, true) }
+            };
+            return map;
+        }
+
+        function sigmoid(x) {
+            return 1 / (1 + Math.exp(-x));
+        }
+
+        async function loadPlyGeometry(url) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`Failed to load ${url}`);
+            const buffer = await response.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let headerEnd = 0;
+            for (let i = 0; i < bytes.length - 10; i += 1) {
+                if (
+                    bytes[i] === 101 &&
+                    bytes[i + 1] === 110 &&
+                    bytes[i + 2] === 100 &&
+                    bytes[i + 3] === 95 &&
+                    bytes[i + 4] === 104 &&
+                    bytes[i + 5] === 101 &&
+                    bytes[i + 6] === 97 &&
+                    bytes[i + 7] === 100 &&
+                    bytes[i + 8] === 101 &&
+                    bytes[i + 9] === 114
+                ) {
+                    const after = bytes[i + 10] === 13 && bytes[i + 11] === 10 ? i + 12 : i + 11;
+                    headerEnd = after;
+                    break;
+                }
+            }
+            const headerText = new TextDecoder().decode(bytes.slice(0, headerEnd));
+            const header = parsePlyHeader(headerText);
+            if (header.format !== 'binary_little_endian') {
+                throw new Error(`Only binary_little_endian supported, got ${header.format}`);
+            }
+            const readers = buildReaders();
+            const props = header.properties;
+            const hasFdc = props.some(prop => prop.name === 'f_dc_0');
+            const hasOpacity = props.some(prop => prop.name === 'opacity');
+            const hasScale = props.some(prop => prop.name === 'scale_0');
+            const position = new Float32Array(header.vertexCount * 3);
+            const color = new Float32Array(header.vertexCount * 3);
+            const opacity = new Float32Array(header.vertexCount);
+            const size = new Float32Array(header.vertexCount);
+            const dv = new DataView(buffer, headerEnd);
+            let offset = 0;
+            for (let i = 0; i < header.vertexCount; i += 1) {
+                let x = 0;
+                let y = 0;
+                let z = 0;
+                let f0 = 0;
+                let f1 = 0;
+                let f2 = 0;
+                let opacityRaw = 1;
+                let s0 = 0;
+                let s1 = 0;
+                let s2 = 0;
+                for (const prop of header.properties) {
+                    const reader = readers[prop.type];
+                    if (!reader) continue;
+                    const value = reader.read(dv, offset);
+                    if (prop.name === 'x') x = value;
+                    if (prop.name === 'y') y = value;
+                    if (prop.name === 'z') z = value;
+                    if (prop.name === 'f_dc_0') f0 = value;
+                    if (prop.name === 'f_dc_1') f1 = value;
+                    if (prop.name === 'f_dc_2') f2 = value;
+                    if (prop.name === 'opacity') opacityRaw = value;
+                    if (prop.name === 'scale_0') s0 = value;
+                    if (prop.name === 'scale_1') s1 = value;
+                    if (prop.name === 'scale_2') s2 = value;
+                    offset += reader.size;
+                }
+                const base = i * 3;
+                position[base] = x;
+                position[base + 1] = y;
+                position[base + 2] = z;
+
+                if (hasFdc) {
+                    const SH_C0 = 0.282095;
+                    const r = Math.min(Math.max(SH_C0 * f0 + 0.5, 0), 1);
+                    const g = Math.min(Math.max(SH_C0 * f1 + 0.5, 0), 1);
+                    const b = Math.min(Math.max(SH_C0 * f2 + 0.5, 0), 1);
+                    color[base] = r;
+                    color[base + 1] = g;
+                    color[base + 2] = b;
+                } else {
+                    color[base] = 1;
+                    color[base + 1] = 0.78;
+                    color[base + 2] = 0.42;
+                }
+
+                opacity[i] = hasOpacity ? sigmoid(opacityRaw) : 1;
+
+                if (hasScale) {
+                    const expS0 = Math.exp(s0);
+                    const expS1 = Math.exp(s1);
+                    const expS2 = Math.exp(s2);
+                    const baseSize = (expS0 + expS1 + expS2) / 3;
+                    size[i] = Math.max(0.001, baseSize * 45.0);
+                } else {
+                    size[i] = 0.6;
+                }
+            }
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(color, 3));
+            geometry.setAttribute('opacity', new THREE.BufferAttribute(opacity, 1));
+            geometry.setAttribute('size', new THREE.BufferAttribute(size, 1));
+            geometry.computeBoundingBox();
+            return geometry;
+        }
+
+        async function loadSequence() {
+            const loads = [];
+            for (let i = 0; i < totalFrames; i += 1) {
+                const name = `frame_${padFrame(i)}.ply`;
+                loads.push(loadPlyGeometry(`${sequenceDir}/${name}`));
+            }
+            const results = await Promise.all(loads);
+            geometries.push(...results);
+            setFrame(0);
+            updateInputsFromObject();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            if (playing && geometries.length) {
+                animationTime += delta;
+                const frame = Math.floor(animationTime * fps) % totalFrames;
+                if (frame !== currentFrame) {
+                    setFrame(frame);
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        loadSequence()
+            .catch(err => {
+                console.error(err);
+                frameLabel.textContent = `Failed to load: ${err.message}`;
+            })
+            .finally(() => {
+                frameSlider.max = Math.max(totalFrames - 1, 0);
+            });
+
+        animate();
+    </script>
+</body>
+</html>

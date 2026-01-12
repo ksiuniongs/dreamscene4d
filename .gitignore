@@ -25,3 +25,7 @@ data*/
 
 
 *.sh
+
+diffusers
+gaussians
+pretrained

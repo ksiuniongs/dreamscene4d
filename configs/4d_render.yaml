@@ -1,0 +1,8 @@
+T: 11
+H: 512
+W: 512
+fovy: 49.1
+near: 0.01
+far: 100.0
+radius: 2.0
+sh_degree: 0

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CUDA Stream + MPI Overlay</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0e1016;
+        color: #e8ecff;
+        font-family: "IBM Plex Sans", Arial, sans-serif;
+      }
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+      #hud {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(0, 0, 0, 0.55);
+        padding: 8px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+      }
+      #hud .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 11px;
+        margin-left: 6px;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <div>
+        CUDA Stream + MPI Overlay
+        <span id="status" class="pill">Connecting...</span>
+      </div>
+      <div id="frame" style="margin-top:4px; font-size:11px; opacity:0.8;">Frame --</div>
+      <div id="perf" style="margin-top:4px; font-size:11px; opacity:0.8;">FPS -- | Mem --</div>
+      <div style="margin-top:8px; font-size:11px;">
+        <label><input id="toggleMpi" type="checkbox" checked /> Show MPI</label>
+      </div>
+      <div style="font-size:11px;">
+        <label><input id="toggleCuda" type="checkbox" checked /> Show CUDA</label>
+      </div>
+      <div id="controlMode" style="margin-top:6px; font-size:11px; opacity:0.8;">
+        Control: MPI (hold Shift for CUDA)
+      </div>
+      <div style="margin-top:8px; font-size:11px;">
+        <strong>CUDA Sliders</strong>
+      </div>
+      <div style="font-size:11px;">
+        <label>X <input id="cudaX" type="range" min="-5" max="5" step="0.01" value="0"></label>
+      </div>
+      <div style="font-size:11px;">
+        <label>Y <input id="cudaY" type="range" min="-5" max="5" step="0.01" value="0"></label>
+      </div>
+      <div style="font-size:11px;">
+        <label>Z <input id="cudaZ" type="range" min="-10" max="10" step="0.01" value="3"></label>
+      </div>
+      <div style="font-size:11px;">
+        <label>Zoom <input id="cudaZoom" type="range" min="20" max="90" step="0.1" value="60"></label>
+      </div>
+      <div style="margin-top:6px; font-size:11px;">
+        <label>Canvas X <input id="cudaOffsetX" type="range" min="-1" max="1" step="0.01" value="0"></label>
+      </div>
+      <div style="font-size:11px;">
+        <label>Canvas Y <input id="cudaOffsetY" type="range" min="-1" max="1" step="0.01" value="0"></label>
+      </div>
+    </div>
+    <script type="module" src="./warp_cuda.js"></script>
+  </body>
+</html>

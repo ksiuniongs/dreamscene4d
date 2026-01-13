@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Delta-Texture Warp Demo</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0e1016;
+        color: #e8ecff;
+        font-family: "IBM Plex Sans", Arial, sans-serif;
+      }
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+      #hud {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(0, 0, 0, 0.55);
+        padding: 8px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <div>Delta texture warp demo</div>
+      <div id="status" style="margin-top:4px; font-size:11px; opacity:0.8;">Loading...</div>
+      <div style="margin-top:6px;">
+        <label>X <input id="tx" type="range" min="-2" max="2" step="0.01" value="0"></label>
+      </div>
+      <div>
+        <label>Y <input id="ty" type="range" min="-2" max="2" step="0.01" value="0"></label>
+      </div>
+      <div>
+        <label>Z <input id="tz" type="range" min="-4" max="4" step="0.01" value="0"></label>
+      </div>
+      <div>
+        <label>Scale <input id="ts" type="range" min="0.1" max="3" step="0.01" value="1"></label>
+      </div>
+      <div>
+        <label>Intensity <input id="ti" type="range" min="0" max="2" step="0.01" value="1"></label>
+      </div>
+      <div>
+        <label>Opacity <input id="to" type="range" min="0" max="2" step="0.01" value="1"></label>
+      </div>
+      <div style="margin-top:6px;font-size:11px;opacity:0.7;">Shift+drag to move point cloud</div>
+    </div>
+    <script type="module" src="./warp.js"></script>
+  </body>
+</html>

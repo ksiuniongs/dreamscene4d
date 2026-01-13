@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CUDA Stream Viewer</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0b0f17;
+        color: #e6e9f5;
+        font-family: "IBM Plex Sans", Arial, sans-serif;
+      }
+      #root {
+        display: grid;
+        grid-template-columns: 1fr 300px;
+        height: 100%;
+      }
+      #view {
+        position: relative;
+        background: #0b0f17;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #stream {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+      }
+      #panel {
+        padding: 16px;
+        background: #141a24;
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        font-size: 13px;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .row input[type="range"] {
+        width: 140px;
+      }
+      .pill {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+      }
+      button {
+        background: #2c6fff;
+        border: none;
+        color: white;
+        padding: 6px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      @media (max-width: 900px) {
+        #root {
+          grid-template-columns: 1fr;
+        }
+        #panel {
+          border-left: none;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          height: 220px;
+          overflow: auto;
+        }
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <div id="view">
+        <canvas id="stream"></canvas>
+      </div>
+      <div id="panel">
+        <div class="row">
+          <strong>CUDA Stream</strong>
+          <span id="status" class="pill">Connecting...</span>
+        </div>
+        <div class="row">
+          <label>Time</label>
+          <input id="time" type="range" min="0" max="1" step="1" value="0" />
+        </div>
+        <div class="row">
+          <label>FPS</label>
+          <input id="fps" type="range" min="1" max="30" step="1" value="12" />
+        </div>
+        <div class="row">
+          <label>Resolution</label>
+          <select id="res">
+            <option value="640x480">640x480</option>
+            <option value="800x600">800x600</option>
+            <option value="960x720">960x720</option>
+            <option value="1280x720">1280x720</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="play">Play</button>
+          <button id="reset" class="secondary">Reset Camera</button>
+        </div>
+        <div class="row">
+          <label>Auto Orbit</label>
+          <input id="orbit" type="checkbox" />
+        </div>
+        <div class="row">
+          <label>Orbit Speed</label>
+          <input id="orbitSpeed" type="range" min="0" max="5" step="0.1" value="1.2" />
+        </div>
+        <div class="row">
+          <div>Latency</div>
+          <div id="latency">-- ms</div>
+        </div>
+        <div class="row">
+          <div>Frame</div>
+          <div id="frame">0 / 0</div>
+        </div>
+        <div style="margin-top:8px; opacity:0.7; font-size:11px;">
+          Drag to orbit. Scroll to zoom. Right-drag to pan.
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./cuda_stream.js"></script>
+  </body>
+</html>
